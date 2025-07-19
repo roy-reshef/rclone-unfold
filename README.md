@@ -1,10 +1,27 @@
-# RClone Downloader
+# RClone Unfold - Cloud Storage Bulk Downloader & Directory Flattener
 
-A Python utility that downloads files from rclone remotes and optionally flattens hierarchical directory structures. This script can convert directory paths like `2011/11/birthday` into flattened names like `2011_11_birthday` for applications that don't support nested folder structures.
+A powerful Python utility for **bulk downloading** and **organizing files** from **cloud storage** using **rclone**. Supports **Google Drive**, **Dropbox**, **OneDrive**, **AWS S3**, and 40+ other cloud providers. Features smart **directory flattening**, **bulk operations**, **file type filtering**, and **safe remote deletion**.
 
-## Use Case
+Perfect for **data migration**, **backup automation**, **media organization**, and **cloud storage management**.
 
-This tool is designed for downloading and organizing media collections from cloud storage services configured with rclone. It's particularly useful when you have files organized in nested folders that need to be reorganized with flattened directory structures.
+[![Python](https://img.shields.io/badge/Python-3.6+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
+[![rclone](https://img.shields.io/badge/Powered%20by-rclone-orange.svg)](https://rclone.org/)
+[![GitHub stars](https://img.shields.io/github/stars/roy-reshef/rclone-unfold?style=social)](https://github.com/roy-reshef/rclone-unfold/stargazers)
+
+## 🎯 Key Features
+
+- **🔄 Bulk Cloud Downloads**: Download entire directories from 40+ cloud storage providers
+- **📁 Smart Directory Flattening**: Convert nested folders into flat structures automatically  
+- **🔍 File Type Filtering**: Download only images, videos, documents, or audio files
+- **✅ Safe Remote Deletion**: Move files with validation and smart bulk deletion
+- **🎮 Interactive Mode**: Confirmation prompts for safe operations
+- **📊 Detailed Statistics**: Comprehensive reporting on operations and performance
+- **🔗 Universal Cloud Support**: Works with any rclone-supported provider (Google Drive, Dropbox, OneDrive, S3, etc.)
+
+## 💡 Use Cases
+
+Perfect for **media archival**, **cloud storage cleanup**, **data migration**, **backup automation**, and **organizing nested photo/video collections** from cloud storage services.
 
 ## Prerequisites
 
@@ -431,4 +448,4 @@ The script includes comprehensive error handling:
 
 ## License
 
-MIT License - feel free to modify and distribute as needed.
+Business Source License 1.1 - free for non-production use. Will become Apache 2.0 on 2029-07-19. See [LICENSE](LICENSE) for details.
