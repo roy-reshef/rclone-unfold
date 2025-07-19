@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*build/
+*dist/
+*.egg-info/
+*.so
+*.egg
+ipython_checkpoints/
+.python-version
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+# VS Code
+.vscode/
+# Mac
+.DS_Store
+# Windows
+Thumbs.db
