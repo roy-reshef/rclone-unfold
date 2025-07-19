@@ -238,7 +238,13 @@ def get_source_dirs(remote_name: str, source_dir: str) -> List[str]:
         for file_path in files:
             parent_dir = os.path.dirname(file_path)
             if parent_dir:
-                dir_set.add(parent_dir)
+                # For nested source directories, we need to prepend the source_dir
+                # to maintain the full path hierarchy
+                full_dir_path = os.path.join(source_dir, parent_dir).replace('\\', '/')
+                dir_set.add(full_dir_path)
+            else:
+                # File is directly in the source directory
+                dir_set.add(source_dir)
 
         sorted_dirs = sorted(list(dir_set))
         print(f"Found {len(sorted_dirs)} unique directories containing files.")
@@ -440,16 +446,20 @@ def display_statistics(stats: Dict, args: ScriptArgs, execution_time: float, is_
         deletion = stats.get('deletion_results')
         if deletion:
             print(f"\n🗑️  Deletion Results:")
-            print(f"  • Files deleted from remote: {deletion['files_deleted']}")
-            print(f"  • Files failed to delete: {deletion['files_failed_to_delete']}")
-            
-            # Show failed deletions (limit to first 5)
-            if deletion['failed_deletions']:
-                print(f"  • Failed deletions:")
-                for i, failed in enumerate(deletion['failed_deletions'][:5]):
-                    print(f"    - {failed['path']}: {failed['error']}")
-                if len(deletion['failed_deletions']) > 5:
-                    print(f"    ... and {len(deletion['failed_deletions']) - 5} more failed deletions")
+            if deletion.get('directory_deleted'):
+                print(f"  • Directory deleted from remote: {args.remote_name}:{args.source_dir}")
+                print(f"  • Total files removed: {deletion['files_deleted']}")
+            else:
+                print(f"  • Files deleted from remote: {deletion['files_deleted']}")
+                print(f"  • Files failed to delete: {deletion['files_failed_to_delete']}")
+                
+                # Show failed deletions (limit to first 5)
+                if deletion['failed_deletions']:
+                    print(f"  • Failed deletions:")
+                    for i, failed in enumerate(deletion['failed_deletions'][:5]):
+                        print(f"    - {failed['path']}: {failed['error']}")
+                    if len(deletion['failed_deletions']) > 5:
+                        print(f"    ... and {len(deletion['failed_deletions']) - 5} more failed deletions")
     
     # Flattened Operations
     if args.flatten:
@@ -476,19 +486,35 @@ def validate_downloaded_files(args: ScriptArgs, included_files: List[Dict]) -> D
         remote_path = file_info['path']
         expected_size = file_info['size']
         
-        # Determine local path based on flattening
+        # The remote_path is relative to the source_dir that was queried
+        # We need to determine how the files were actually copied
         if args.flatten:
-            # For flattened structure, file goes into flattened directory
+            # For flattened structure, we need to determine which flattened directory the file went to
             dir_path = os.path.dirname(remote_path)
             file_name = os.path.basename(remote_path)
+            
             if dir_path:
-                flattened_dir = flatten_path(dir_path, args.separator)
+                # File was in a subdirectory of the source_dir
+                # The flattened directory name should be based on the full path from source_dir
+                full_dir_path = os.path.join(args.source_dir, dir_path).replace('\\', '/')
+                relative_path = os.path.relpath(full_dir_path, args.source_dir) if full_dir_path != args.source_dir else os.path.basename(full_dir_path)
+                flattened_dir = flatten_path(relative_path, args.separator)
                 local_path = args.dest_dir / flattened_dir / file_name
             else:
-                local_path = args.dest_dir / file_name
+                # File was directly in the source_dir
+                flattened_dir = flatten_path(os.path.basename(args.source_dir), args.separator)
+                local_path = args.dest_dir / flattened_dir / file_name
         else:
-            # For preserved structure, maintain original path
-            local_path = args.dest_dir / remote_path
+            # For preserved structure, the file should be in a path relative to the original source_dir
+            if os.path.dirname(remote_path):
+                # File was in a subdirectory
+                full_path = os.path.join(args.source_dir, remote_path).replace('\\', '/')
+                relative_path = os.path.relpath(full_path, args.source_dir)
+                local_path = args.dest_dir / relative_path
+            else:
+                # File was directly in the source_dir
+                relative_path = os.path.relpath(args.source_dir, args.source_dir) if args.source_dir != args.source_dir else os.path.basename(args.source_dir)
+                local_path = args.dest_dir / relative_path / remote_path
         
         validation_results['files_validated'] += 1
         
@@ -543,33 +569,90 @@ def perform_post_operation_validation(args: ScriptArgs, stats: Dict) -> None:
     # Delete validated files from remote if requested
     if args.delete_after_download and validation_results['successfully_validated_files']:
         files_to_delete = len(validation_results['successfully_validated_files'])
+        total_files = stats['total_files']
+        files_excluded = stats.get('files_excluded', 0)
+        files_missing = validation_results['files_missing']
+        files_size_mismatch = validation_results['files_size_mismatch']
+        
+        # Determine deletion strategy: bulk directory vs individual files
+        can_delete_directory = (
+            files_to_delete == total_files and  # All files were validated successfully
+            files_excluded == 0 and             # No files were excluded by filters
+            files_missing == 0 and              # No files are missing
+            files_size_mismatch == 0             # No size mismatches
+        )
         
         # Interactive confirmation before deletion
         if args.interactive:
-            print(f"\n⚠️  About to delete {files_to_delete} validated files from remote '{args.remote_name}'")
-            if not prompt_user_confirmation("Are you sure you want to delete these files from the remote?", "n"):
+            print(f"\n⚠️  DELETION WARNING ⚠️")
+            if can_delete_directory:
+                print(f"All {total_files} files were successfully downloaded and validated.")
+                print(f"About to delete the entire directory:")
+                print(f"Remote: {args.remote_name}:{args.source_dir}")
+                print(f"This will remove the directory and all its contents from the remote.")
+            else:
+                print(f"About to delete {files_to_delete} validated files from:")
+                print(f"Remote: {args.remote_name}:{args.source_dir}")
+                if files_excluded > 0:
+                    print(f"Note: {files_excluded} files were excluded by filters and will remain.")
+                if files_missing > 0:
+                    print(f"Note: {files_missing} files failed validation and will remain.")
+                if files_size_mismatch > 0:
+                    print(f"Note: {files_size_mismatch} files had size mismatches and will remain.")
+                print(f"Only successfully validated files will be deleted individually.")
+            print(f"This action cannot be undone!")
+            if not prompt_user_confirmation("Are you sure you want to delete from the remote?", "n"):
                 print("Deletion cancelled by user. Files remain on remote.")
                 return
         
         deletion_results = delete_validated_files_from_remote(
             args, 
-            validation_results['successfully_validated_files']
+            validation_results['successfully_validated_files'],
+            can_delete_directory
         )
         stats['deletion_results'] = deletion_results
 
-def delete_validated_files_from_remote(args: ScriptArgs, validated_files: List[Dict]) -> Dict:
+def delete_validated_files_from_remote(args: ScriptArgs, validated_files: List[Dict], can_delete_directory: bool = False) -> Dict:
     """Deletes successfully validated files from the remote."""
     deletion_results = {
         'files_to_delete': len(validated_files),
         'files_deleted': 0,
         'files_failed_to_delete': 0,
-        'failed_deletions': []
+        'failed_deletions': [],
+        'directory_deleted': False
     }
     
     if not validated_files:
         return deletion_results
     
-    print(f"\nDeleting {len(validated_files)} validated files from remote...")
+    if can_delete_directory:
+        # Delete the entire directory in one operation
+        print(f"\nDeleting entire directory: {args.remote_name}:{args.source_dir}")
+        try:
+            result = subprocess.run(
+                ["rclone", "purge", f"{args.remote_name}:{args.source_dir}"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            deletion_results['files_deleted'] = len(validated_files)
+            deletion_results['directory_deleted'] = True
+            print(f"✅ Successfully deleted directory and all {len(validated_files)} files")
+            
+        except subprocess.CalledProcessError as e:
+            # If directory deletion fails, fall back to individual file deletion
+            print(f"⚠️  Directory deletion failed: {e.stderr.strip()}")
+            print(f"Falling back to individual file deletion...")
+            deletion_results = delete_files_individually(args, validated_files, deletion_results)
+    else:
+        # Delete files individually
+        deletion_results = delete_files_individually(args, validated_files, deletion_results)
+    
+    return deletion_results
+
+def delete_files_individually(args: ScriptArgs, validated_files: List[Dict], deletion_results: Dict) -> Dict:
+    """Deletes files individually from the remote."""
+    print(f"\nDeleting {len(validated_files)} validated files individually from remote path: {args.remote_name}:{args.source_dir}")
     
     for file_info in validated_files:
         remote_file_path = f"{args.remote_name}:{args.source_dir}/{file_info['path']}"
@@ -597,9 +680,12 @@ def delete_validated_files_from_remote(args: ScriptArgs, validated_files: List[D
     failed = deletion_results['files_failed_to_delete']
     total = deletion_results['files_to_delete']
     
-    print(f"\nDeletion Summary: {deleted}/{total} files deleted from remote")
-    if failed > 0:
-        print(f"⚠️  Warning: {failed} files could not be deleted from remote")
+    if deletion_results.get('directory_deleted'):
+        print(f"\nDeletion Summary: Directory deleted successfully with all {deleted} files")
+    else:
+        print(f"\nDeletion Summary: {deleted}/{total} files deleted from remote")
+        if failed > 0:
+            print(f"⚠️  Warning: {failed} files could not be deleted from remote")
     
     return deletion_results
 
@@ -626,13 +712,17 @@ def generate_copy_plan(args: ScriptArgs, source_dirs: List[str]):
     if args.file_types:
         print(f"File types filter: {', '.join(args.file_types)}")
     for src_dir in source_dirs:
-        source_path = f"{args.remote_name}:{args.source_dir}/{src_dir}"
+        source_path = f"{args.remote_name}:{src_dir}"
         if args.flatten:
-            flattened_name = flatten_path(src_dir, args.separator)
+            # For flattening, use the relative path from the original source_dir
+            relative_path = os.path.relpath(src_dir, args.source_dir) if src_dir != args.source_dir else os.path.basename(src_dir)
+            flattened_name = flatten_path(relative_path, args.separator)
             dest_path = args.dest_dir / flattened_name
             print(f"Source: '{source_path}' ==> Destination: '{dest_path}'")
         else:
-            dest_path = args.dest_dir / src_dir
+            # For preserving structure, use the relative path from the original source_dir
+            relative_path = os.path.relpath(src_dir, args.source_dir) if src_dir != args.source_dir else os.path.basename(src_dir)
+            dest_path = args.dest_dir / relative_path
             print(f"Source: '{source_path}' ==> Destination: '{dest_path}'")
 
 def execute_dry_run():
@@ -649,8 +739,10 @@ def execute_copy(args: ScriptArgs, source_dirs: List[str]):
 
     if args.flatten:
         for src_dir in source_dirs:
-            source_path = f"{args.remote_name}:{args.source_dir}/{src_dir}"
-            flattened_name = flatten_path(src_dir, args.separator)
+            source_path = f"{args.remote_name}:{src_dir}"
+            # For flattening, use the relative path from the original source_dir
+            relative_path = os.path.relpath(src_dir, args.source_dir) if src_dir != args.source_dir else os.path.basename(src_dir)
+            flattened_name = flatten_path(relative_path, args.separator)
             dest_path = str(args.dest_dir / flattened_name)
             print(f"\nCopying from '{source_path}' to '{dest_path}' (flattened)... ")
             command = ["rclone", "copy", source_path, dest_path, "--progress"] + file_filters
@@ -659,14 +751,18 @@ def execute_copy(args: ScriptArgs, source_dirs: List[str]):
             except subprocess.CalledProcessError as e:
                 print(f"Error during copy: {e}", file=sys.stderr)
     else:
-        source_path = f"{args.remote_name}:{args.source_dir}"
-        dest_path = str(args.dest_dir)
-        print(f"\nCopying from '{source_path}' to '{dest_path}' (preserving structure)... ")
-        command = ["rclone", "copy", source_path, dest_path, "--progress"] + file_filters
-        try:
-            subprocess.run(command, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Error during copy: {e}", file=sys.stderr)
+        # For non-flattened structure, copy each directory individually to maintain structure
+        for src_dir in source_dirs:
+            source_path = f"{args.remote_name}:{src_dir}"
+            # For preserving structure, use the relative path from the original source_dir
+            relative_path = os.path.relpath(src_dir, args.source_dir) if src_dir != args.source_dir else os.path.basename(src_dir)
+            dest_path = str(args.dest_dir / relative_path)
+            print(f"\nCopying from '{source_path}' to '{dest_path}' (preserving structure)... ")
+            command = ["rclone", "copy", source_path, dest_path, "--progress"] + file_filters
+            try:
+                subprocess.run(command, check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"Error during copy: {e}", file=sys.stderr)
 
     print("\n--- All tasks complete. ---")
 

@@ -18,6 +18,7 @@ venv/
 ENV/
 # VS Code
 .vscode/
+.claude/
 # Mac
 .DS_Store
 # Windows

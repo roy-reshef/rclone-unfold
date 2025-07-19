@@ -14,6 +14,8 @@ This tool is designed for downloading and organizing media collections from clou
 
 ### Setting up rclone
 
+**About rclone**: rclone is a command-line program to manage files on cloud storage. It provides a unified interface to interact with various cloud storage providers (Google Drive, Dropbox, OneDrive, S3, etc.). The key benefit of using rclone is its abstraction of the remote storage - once configured, you can use the same commands and interface regardless of which cloud provider you're using.
+
 If you haven't configured rclone yet:
 
 ```bash
@@ -22,17 +24,17 @@ If you haven't configured rclone yet:
 # macOS: brew install rclone
 # Windows: Download from https://rclone.org/downloads/
 
-# Configure your cloud storage remote
+# Configure your cloud storage remote (command line)
 rclone config
+
+# Alternative: Use the web GUI for configuration
+rclone rcd --rc-web-gui
+# Then open http://localhost:5572 in your browser
 ```
 
 ## Installation
 
-No installation required - just download the script:
-
-```bash
-curl -O https://raw.githubusercontent.com/your-repo/rclone-unfold/main/rclone-unfold.py
-```
+No installation required - just download the script
 
 ## Usage
 
@@ -88,7 +90,16 @@ python rclone-unfold.py dropbox "Camera Uploads" --flatten -s "-" -d ./photos
 python rclone-unfold.py dropbox "Photos/2023" --flatten -d ./2023_photos
 ```
 
-**8. Copy only specific file types:**
+**8. Copy from nested subdirectories:**
+```bash
+# Copy from deeply nested directory
+python rclone-unfold.py dropbox "Photos/2023/vacation/europe" --flatten -d ./europe_photos
+
+# Copy from specific album directory
+python rclone-unfold.py dropbox "media/misc" -f images videos -d ./misc_media
+```
+
+**9. Copy only specific file types:**
 ```bash
 # Copy only images
 python rclone-unfold.py dropbox "Camera Uploads" --file-types images -d ./photos
@@ -102,7 +113,7 @@ python rclone-unfold.py dropbox "Camera Uploads" -f images videos -d ./media
 python rclone-unfold.py dropbox "Camera Uploads" -f images videos audio -d ./media
 ```
 
-**9. Move files (download and delete from remote):**
+**10. Move files (download and delete from remote):**
 ```bash
 # Download and delete validated files from remote
 python rclone-unfold.py dropbox "Camera Uploads" --delete-after-download -d ./photos
@@ -111,7 +122,7 @@ python rclone-unfold.py dropbox "Camera Uploads" --delete-after-download -d ./ph
 python rclone-unfold.py dropbox "Camera Uploads" -f images --flatten --delete-after-download -d ./photos
 ```
 
-**10. Interactive mode for safe operations:**
+**11. Interactive mode for safe operations:**
 ```bash
 # Interactive dry run with confirmation prompts
 python rclone-unfold.py dropbox "Camera Uploads" --dry-run -i
@@ -195,8 +206,10 @@ The script automatically provides comprehensive statistics at the end of each op
 - Files with size mismatches (with details)
 
 **Deletion Results** (when using `--delete-after-download`):
-- Files successfully deleted from remote
-- Files that failed to delete (with error details)
+- **Bulk Deletion**: Shows when entire directory was deleted
+- **Individual Deletion**: Files successfully deleted vs failed
+- **Detailed Error Reporting**: Failed deletions with specific error messages
+- **Path Information**: Exact remote paths that were affected
 
 **Flattened Operations** (when using `--flatten`):
 - Original directory structure depth
@@ -210,27 +223,66 @@ After completing a download (not during dry-run), the script automatically valid
 - **Size Validation**: Compares local file size with remote file size
 - **Detailed Reporting**: Shows missing files and size mismatches with specific details
 - **Path Resolution**: Handles both flattened and preserved directory structures
+- **Nested Directory Support**: Correctly validates files from any source directory depth (e.g., `media/misc`, `Photos/2023/vacation/europe`)
 
-The validation process helps ensure download integrity and identifies any files that may need to be re-downloaded.
+The validation process helps ensure download integrity and identifies any files that may need to be re-downloaded. This is especially important when working with nested source directories to ensure all files were placed in the correct local paths.
 
 ## Remote File Deletion
 
-When using the `--delete-after-download` option, the script performs a safe "move" operation:
+When using the `--delete-after-download` option, the script performs a safe "move" operation with intelligent deletion strategies:
 
 1. **Download**: Files are first downloaded to the local destination
 2. **Validation**: Each file is validated for existence and correct size
-3. **Deletion**: Only successfully validated files are deleted from the remote
+3. **Smart Deletion**: The script chooses the most efficient deletion method
+
+### Smart Deletion Logic
+
+**Bulk Directory Deletion (Optimal):**
+- **When**: All files downloaded successfully + No files excluded by filters + No validation failures
+- **Method**: Uses `rclone purge` to delete the entire source directory in one operation
+- **Benefits**: Much faster than individual file deletion, cleaner remote cleanup
+- **Example**: Downloading all 449 files from `media/misc` → deletes entire `media/misc` directory
+
+**Individual File Deletion (Selective):**
+- **When**: Some files were excluded, failed validation, or download errors occurred
+- **Method**: Deletes only successfully validated files one by one
+- **Benefits**: Precise cleanup, preserves files that weren't downloaded
+- **Example**: Downloading only images (excluding videos) → deletes only the downloaded image files
+
+### Deletion Warning Messages
+
+**Bulk Deletion Warning:**
+```
+⚠️  DELETION WARNING ⚠️
+All 449 files were successfully downloaded and validated.
+About to delete the entire directory:
+Remote: dropbox:media/misc
+This will remove the directory and all its contents from the remote.
+This action cannot be undone!
+```
+
+**Individual Deletion Warning:**
+```
+⚠️  DELETION WARNING ⚠️
+About to delete 422 validated files from:
+Remote: dropbox:media/misc
+Note: 20 files were excluded by filters and will remain.
+Only successfully validated files will be deleted individually.
+This action cannot be undone!
+```
 
 **Safety Features:**
 - Files are only deleted if they pass validation (exist locally with correct size)
 - Failed downloads or corrupted files remain on the remote
-- Detailed reporting shows which files were deleted and which failed
-- Each deletion is performed individually to ensure granular error handling
+- Clear warnings show exactly which remote path will be affected
+- Automatic fallback to individual deletion if bulk deletion fails
+- Interactive mode provides confirmation before any deletion
 
 **Use Cases:**
-- Migrating files from cloud storage with automatic cleanup
-- Freeing up remote storage space after successful downloads
-- Ensuring files are moved (not just copied) to avoid duplicates
+- **Complete Migration**: Download entire directories and remove them from remote
+- **Selective Cleanup**: Download specific file types while preserving others
+- **Storage Management**: Free up remote space after successful downloads
+- **Data Archival**: Move files from cloud storage to local archives
 
 ## Interactive Mode
 
@@ -257,7 +309,7 @@ Interactive mode (`-i` or `--interactive`) adds safety prompts at critical decis
 PROGRAM CONFIGURATION
 ==================================================
 Remote name: dropbox
-Source directory: Camera Uploads
+Source directory: media/misc
 Destination directory: /home/user/photos
 Flatten directories: Yes
 Directory separator: '_'
@@ -271,10 +323,47 @@ Do you want to proceed with these settings? [Y/n]: y
 
 [... operation proceeds ...]
 
-⚠️  About to delete 150 validated files from remote 'dropbox'
-Are you sure you want to delete these files from the remote? [N/y]: n
+⚠️  DELETION WARNING ⚠️
+All 449 files were successfully downloaded and validated.
+About to delete the entire directory:
+Remote: dropbox:media/misc
+This will remove the directory and all its contents from the remote.
+This action cannot be undone!
+Are you sure you want to delete from the remote? [N/y]: n
 Deletion cancelled by user. Files remain on remote.
 ```
+
+## Nested Source Directory Support
+
+The script fully supports nested source directories at any depth level:
+
+**Supported Path Formats:**
+```bash
+# Top-level directory
+python rclone-unfold.py dropbox "Photos" -d ./photos
+
+# Single-level nested
+python rclone-unfold.py dropbox "Photos/2023" -d ./2023_photos
+
+# Multi-level nested
+python rclone-unfold.py dropbox "Photos/2023/vacation/europe" -d ./europe_trip
+
+# Complex nested paths
+python rclone-unfold.py dropbox "media/archives/family/birthdays/2023" -d ./family_2023
+```
+
+**How It Works:**
+1. **Path Recognition**: The script treats the entire path as a source directory, not individual segments
+2. **File Discovery**: Uses `rclone lsf -R` to recursively find all files within the nested path
+3. **Structure Preservation**: Maintains subdirectory relationships within the specified source
+4. **Validation**: Correctly validates files based on their actual download locations
+
+**Example with `media/misc`:**
+- **Source**: `dropbox:media/misc` (contains 449 files directly)
+- **Flattened Result**: All files go to `{dest_dir}/misc/`
+- **Preserved Result**: Files maintain structure relative to `misc`
+
+This enhancement allows you to work with any organizational structure in your cloud storage, from simple top-level folders to deeply nested archives.
 
 ## How Directory Flattening Works
 
@@ -324,12 +413,21 @@ The script includes comprehensive error handling:
 **"No source directories found"**
 - Check that the source directory exists and contains files
 - Verify the remote name and path are correct
+- For nested paths like `media/misc`, ensure the full path exists on the remote
+- Use `--list-remote-top-dirs` to browse available directories
+
+**"Files missing during validation"**
+- This was a known issue with nested source directories (now fixed)
+- Ensure you're using the latest version of the script
+- Validation now correctly handles nested paths like `media/misc/file.jpg`
 
 ## Performance Notes
 
 - The script uses rclone's `--progress` flag to show transfer progress
 - Large directories are processed efficiently by discovering structure first
 - Dry run mode allows you to verify operations before copying
+- **Smart Deletion**: When all files are downloaded successfully, uses bulk directory deletion (`rclone purge`) which is much faster than deleting hundreds of files individually
+- **Nested Path Handling**: Efficiently processes deeply nested source directories without scanning unnecessary parent directories
 
 ## License
 
